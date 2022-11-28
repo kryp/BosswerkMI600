@@ -1,0 +1,28 @@
+# Editor/ IDE
+*.sw[po]
+.project
+.pydevproject
+.idea
+.vscode/
+
+
+# PYTHON : Byte-compiled / optimized / DLL files
+*.py[cod]
+*$py.class
+docs/_build/
+__pycache__/
+build/
+dist/
+eventmaster.egg-info/
+
+
+# OS X
+.DS_Store
+
+
+
+# temp & log
+tmp/
+temp/
+log/
+logs/

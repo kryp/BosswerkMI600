@@ -1,0 +1,10 @@
+[Unit]
+Description=Run BosswerkMI600
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+Unit=bosswerkmi600.service
+
+[Install]
+WantedBy=timers.target
