@@ -2,10 +2,10 @@
 Description=BosswerkMI600 job
 
 [Service]
-#User=www-data
-Environment=PYTHONPATH=/opt/BosswerkMI600 BOSSWERKIP=192.168.180.57 /usr/bin/python3 -m BosswerkMI600
+Environment=PYTHONPATH=/opt/BosswerkMI600
+Environment=BOSSWERKIP=192.168.180.57
+EnvironmentFile=-/etc/bosswerkmi600.env
 ExecStart=/usr/bin/python3 -m BosswerkMI600
 
 [Install]
 WantedBy=basic.target
-

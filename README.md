@@ -20,9 +20,21 @@ I started to use the script from https://github.com/fr00sch/bosswerk_mi600_solar
 ## config
 Use environment variables:
 
+* `BOSSWERKIP` (required) - inverter IP/hostname
+* `BOSSWERK_USER` / `BOSSWERK_PW` - HTTP basic auth for the inverter web UI (default `admin`/`admin`)
+* `BOSSWERK_INFLUXDB_HOST` / `BOSSWERK_INFLUXDB_PORT` - InfluxDB 2.x host/port. Write is skipped unless both this and `BOSSWERK_INFLUXDB_TOKEN` are set.
+* `BOSSWERK_INFLUXDB_TOKEN` - InfluxDB 2.x API token
+* `BOSSWERK_INFLUXDB_ORG` - InfluxDB org (default `dholz`)
+* `BOSSWERK_INFLUXDB_BUCKET` - InfluxDB bucket (default `vzlogger`)
+* `BOSSWERK_MQTT_TOPIC` - set to enable MQTT publishing
+* `BOSSWERK_MQTT_HOST` / `BOSSWERK_MQTT_PORT` - MQTT broker (default `localhost:1883`)
+* `BOSSWERK_MQTT_USER` / `BOSSWERK_MQTT_PW` - MQTT credentials
+
+Data is written to InfluxDB as measurement `solarinverter` (tag `device=MI600`, fields `power`, `today_kwh`, `total_kwh`).
 
 ## Systemd:
 cp templates/bosswerkmi600* /etc/systemd/system
+# put secrets (BOSSWERK_INFLUXDB_TOKEN etc.) in /etc/bosswerkmi600.env (chmod 600, not tracked in git)
 systemctl daemon-reload
 systemctl enable bosswerkmi600.service
 systemctl enable bosswerkmi600.timer

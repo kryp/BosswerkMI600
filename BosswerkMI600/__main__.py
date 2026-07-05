@@ -1,176 +1,170 @@
 # -*- coding: utf-8 -*-
 import requests
+import urllib3
 from requests.exceptions import Timeout
 import os
-import time, json, sys, math, datetime, re
+import time, json, sys, re
 from datetime import datetime
 import subprocess
-import platform
-
-# from influxdb_client import InfluxDBClient, Point
-# client = InfluxDBClient(url=f"http://{influxdbhost}:8086", token=f'', org='-')
 
 bosswerkIP = os.environ['BOSSWERKIP']
 htaccess_user = os.environ.get('BOSSWERK_USER', 'admin')
 htaccess_pw = os.environ.get('BOSSWERK_PW', 'admin')
 
 mqtt_topic = os.environ.get('BOSSWERK_MQTT_TOPIC', None)
-# mqtt_topic = "/MI600_mqtt/data"
-# mqtt_client_id = "MI600_mqtt"
-# mqtt_username = 'USERNAME'
-# mqtt_password = 'PASSWORD'
+mqtt_host = os.environ.get('BOSSWERK_MQTT_HOST', 'localhost')
+mqtt_port = int(os.environ.get('BOSSWERK_MQTT_PORT', '1883'))
+mqtt_username = os.environ.get('BOSSWERK_MQTT_USER', None)
+mqtt_password = os.environ.get('BOSSWERK_MQTT_PW', None)
 
-influxdbhost = os.environ.get('BOSSWERK_INFLUXDB_HOST', 'localhost')
+# InfluxDB 2.x (token auth). Write is skipped unless a token is configured.
+influxdbhost = os.environ.get('BOSSWERK_INFLUXDB_HOST', None)
 influxdbport = os.environ.get('BOSSWERK_INFLUXDB_PORT', '8086')
+influxdbtoken = os.environ.get('BOSSWERK_INFLUXDB_TOKEN', None)
+influxdborg = os.environ.get('BOSSWERK_INFLUXDB_ORG', 'dholz')
 influxdbucket = os.environ.get('BOSSWERK_INFLUXDB_BUCKET', 'vzlogger')
 influxdburl = f"http://{influxdbhost}:{influxdbport}"
 
 webinterface_url = f'http://{bosswerkIP}/status.html'
 ping_try_count = 3
 
+# Inverter presents a self-signed/plain-http endpoint on the LAN; suppress the noise.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
     from paho.mqtt import client as mqtt
 except ImportError:
-    print("could not find paho.mqtt: pip install paho.mqtt")
+    mqtt = None
+    print("could not find paho.mqtt: pip install paho-mqtt")
 
-def connectMQTT(ip, port):
-    #https://github.com/fr00sch/bosswerk_mi600_solar
-    #https://pypi.org/project/paho-mqtt/
+
+def connectMQTT():
+    # https://github.com/fr00sch/bosswerk_mi600_solar
     client = mqtt.Client()
-    client.username_pw_set(mqtt_username, mqtt_password)
+    if mqtt_username:
+        client.username_pw_set(mqtt_username, mqtt_password)
     client.on_connect = on_connect
     client.on_message = on_message
-    #with mqtt.Client(client_id="0", clean_session=True, userdata=None, protocol="MQTTv311", transport="tcp") as client:
-    client.connect(ip , port, 60)
+    client.connect(mqtt_host, mqtt_port, 60)
     return client
 
+
 def sendData(client, webdata_now_p, webdata_today_e, webdata_total_e):
-    #https://github.com/fr00sch/bosswerk_mi600_solar
-    startmsg = json.dumps({"device": {"status": {"clientname":'MI600', "status":'Online', "power":webdata_now_p, "today":webdata_today_e, "total":webdata_total_e, "lastDateUpdate":datetime.today().strftime('%Y-%m-%d %H:%M:%S')}}}, skipkeys = True, allow_nan = False);
+    # https://github.com/fr00sch/bosswerk_mi600_solar
+    startmsg = json.dumps({"device": {"status": {
+        "clientname": 'MI600', "status": 'Online',
+        "power": webdata_now_p, "today": webdata_today_e, "total": webdata_total_e,
+        "lastDateUpdate": datetime.today().strftime('%Y-%m-%d %H:%M:%S')}}},
+        skipkeys=True, allow_nan=False)
     client.publish(mqtt_topic, startmsg, qos=0, retain=False)
     client.disconnect()
 
-# The callback for when the client receives a CONNACK response from the server.
+
 def on_connect(client, userdata, flags, rc):
-    #https://github.com/fr00sch/bosswerk_mi600_solar
-    print("Connected with result code "+str(rc))
-    # Subscribing in on_connect() means that if we lose the connection and
-    # reconnect then subscriptions will be renewed.
+    print("Connected with result code " + str(rc))
     client.subscribe("$SYS/#")
 
-# The callback for when a PUBLISH message is received from the server.
-def on_message(client, userdata, msg):
-    #https://github.com/fr00sch/bosswerk_mi600_solar
-    print(msg.topic+":"+str(msg.payload))
 
+def on_message(client, userdata, msg):
+    print(msg.topic + ":" + str(msg.payload))
 
 
 def ping_ip(current_ip_address):
-        #source: https://dmitrygolovach.com/python-ping-ip-address/
-        try:
-            output = subprocess.check_output("ping -{} 1 {}".format('n' if platform.system().lower(
-            ) == "windows" else 'c', current_ip_address ), shell=True, universal_newlines=True)
-            if 'unreachable' in output:
-                return False
-            else:
-                return True
-        except Exception:
-                return False
+    try:
+        result = subprocess.run(
+            ["ping", "-c", "1", "-W", "2", current_ip_address],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 def find_target_value(target, hp_source):
-  find_target = hp_source.find(target)
-  #print("target: {}" .format(find_target))
-  get_target_back = "-1"
-  if find_target > 0:
+    find_target = hp_source.find(target)
+    if find_target < 0:
+        return None
     find_value_start = hp_source.find("\"", find_target)
-    #print("start: {}" .format(find_value_start))
-    find_value_end = hp_source.find("\"", find_value_start+1)
-    #print("end: {}" .format(find_value_end))
+    find_value_end = hp_source.find("\"", find_value_start + 1)
+    if find_value_start < 0 or find_value_end < 0:
+        return None
+    return hp_source[find_value_start + 1:find_value_end]
 
-  get_target_back = hp_source[find_value_start+1:find_value_end]
-  return(get_target_back)
 
+def writeInflux(power, today, total):
+    if not influxdbhost or not influxdbtoken:
+        return
+    line = f"solarinverter,device=MI600 power={float(power)},today_kwh={float(today)},total_kwh={float(total)}"
+    try:
+        r = requests.post(
+            f"{influxdburl}/api/v2/write?org={influxdborg}&bucket={influxdbucket}&precision=s",
+            headers={"Authorization": f"Token {influxdbtoken}"},
+            data=line, timeout=5)
+        if r.status_code >= 300:
+            print(f"influx write failed: {r.status_code} {r.text}")
+    except requests.exceptions.RequestException as e:
+        print(f"influx write error: {e}")
 
 
 def get_Solar_values():
     try:
-        r = requests.get(webinterface_url, verify=False, auth=(htaccess_user, htaccess_pw), timeout=2)
+        r = requests.get(webinterface_url, verify=False, auth=(htaccess_user, htaccess_pw), timeout=5)
     except Timeout:
         print('I waited far too long')
-    else:
-        # print('The request got executed')
-        if r.status_code == 200:
-            hp_source = str(r.text)
-            #print(hp_source)
-            error = re.search("ERROR:404 Not Found:", hp_source)
+        return
 
-
-            if(hp_source.find('ERROR:404 Not Found') == True):
-                print(error)
-            else:
-                ret0 = find_target_value("var webdata_now_p =", hp_source)
-                #print(find_target_value("var webdata_now_p =", hp_source))
-                if not (re.search('---',ret0) == True):
-                    power = ret0
-                    #print(ret0)
-                ret1 = find_target_value("var webdata_today_e =", hp_source)
-                #print(find_target_value("var webdata_today_e =", hp_source))
-                if not (re.search('---',ret1) == True):
-                    today = ret1
-                    #print(ret1)
-                ret2 = find_target_value("var webdata_total_e =", hp_source)
-                #print(find_target_value("var webdata_total_e =", hp_source))
-                if not (re.search('---',ret2) == True):
-                    total = ret2
-                    #print(ret2)
-                # client = connectMQTT(mqtt_ip, mqtt_port)
-                data = ( power, today, total)
-                print(data)
-                if power != "" and influxdbhost:
-                    influxpost = f"{influxdburl}/write?db=vzlogger&u=fhem&p=pw"
-                    # 1  6-7-0,uuid=4c920356-abfe-11e9-a89b-c74ec9b5ea02,foo=bar value=124.472455 1656242453142
-                    r = requests.post(influxpost, data=f"solarpower value={power}")
-                    print(f"influxresult: {r.status_code}")
-                    # p = Point("solarpower").field("value", int(power))
-                    # write_api.write(bucket=bucket, record=p)
-                if power != "" and mqtt_topic:
-                    client = connectMQTT(mqtt_ip, mqtt_port)
-                    sendData(client, power, today, total)
-        else:
-            print(r.status_code)
-
-        #close connection
+    if r.status_code != 200:
+        print(r.status_code)
         r.close()
-        # print("Connection Closed")
+        return
+
+    hp_source = r.text
+    if 'ERROR:404 Not Found' in hp_source:
+        print("inverter returned 404 for status.html")
+        r.close()
+        return
+
+    power = find_target_value("var webdata_now_p =", hp_source)
+    today = find_target_value("var webdata_today_e =", hp_source)
+    total = find_target_value("var webdata_total_e =", hp_source)
+    r.close()
+
+    # inverter reports "---" for any value while it's offline/asleep
+    if any(v is None or '---' in v for v in (power, today, total)):
+        print(f"incomplete data from inverter: power={power} today={today} total={total}")
+        return
+
+    data = (power, today, total)
+    print(data)
+
+    writeInflux(power, today, total)
+
+    if mqtt_topic and mqtt:
+        client = connectMQTT()
+        sendData(client, power, today, total)
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     getDataCountPing = 0
     while getDataCountPing < ping_try_count:
-        #print(getDataCountPing)
-        if ping_ip(bosswerkIP) == True:
+        if ping_ip(bosswerkIP):
             get_Solar_values()
             break
         else:
-          getDataCountPing = getDataCountPing + 1
-          time.sleep(3)
-          if getDataCountPing == ping_try_count:
-            startmsg = json.dumps(
-                {"device": {
-                    "status": {
-                        "clientname":'MI600',
-                        "status":"Offline",
-                        "power": 0.0,
-                        "lastDateUpdate":datetime.today().strftime('%Y-%m-%d %H:%M:%S')
-                            }
+            getDataCountPing += 1
+            time.sleep(3)
+            if getDataCountPing == ping_try_count:
+                startmsg = json.dumps(
+                    {"device": {
+                        "status": {
+                            "clientname": 'MI600',
+                            "status": "Offline",
+                            "power": 0.0,
+                            "lastDateUpdate": datetime.today().strftime('%Y-%m-%d %H:%M:%S')
                         }
-                    },
-                skipkeys = True, allow_nan = False)
-            print(startmsg)
-            if mqtt_topic:
-                client = connectMQTT(mqtt_ip, mqtt_port)
-                client.publish(mqtt_topic, startmsg, qos=0, retain=False)
-                client.disconnect()
-
+                    }},
+                    skipkeys=True, allow_nan=False)
+                print(startmsg)
+                if mqtt_topic and mqtt:
+                    client = connectMQTT()
+                    client.publish(mqtt_topic, startmsg, qos=0, retain=False)
+                    client.disconnect()
