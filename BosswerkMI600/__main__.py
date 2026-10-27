@@ -25,6 +25,10 @@ influxdbucket = os.environ.get('BOSSWERK_INFLUXDB_BUCKET', 'vzlogger')
 influxdburl = f"http://{influxdbhost}:{influxdbport}"
 
 webinterface_url = f'http://{bosswerkIP}/status.html'
+
+# The inverter's wifi stick is flaky (stalled replies, empty values). With this switch on,
+# such errors are logged and the run exits 0, so a systemd unit doesn't end up "failed".
+ignore_connection_errors = os.environ.get('BOSSWERK_IGNORE_CONNECTION_ERRORS', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 ping_try_count = 3
 
 # Inverter presents a self-signed/plain-http endpoint on the LAN; suppress the noise.
@@ -115,9 +119,9 @@ def get_Solar_values():
             break
         except requests.exceptions.RequestException as e:
             print(f"inverter request failed (attempt {attempt}/2): {e}")
+            if attempt == 2:
+                raise
             time.sleep(2)
-    if r is None:
-        return
 
     if r.status_code != 200:
         print(r.status_code)
@@ -136,7 +140,8 @@ def get_Solar_values():
     r.close()
 
     # inverter reports "---" for any value while it's offline/asleep
-    if any(v is None or '---' in v for v in (power, today, total)):
+    # (or empty strings while it is waking up)
+    if any(not v or '---' in v for v in (power, today, total)):
         print(f"incomplete data from inverter: power={power} today={today} total={total}")
         return
 
@@ -154,7 +159,12 @@ if __name__ == '__main__':
     getDataCountPing = 0
     while getDataCountPing < ping_try_count:
         if ping_ip(bosswerkIP):
-            get_Solar_values()
+            try:
+                get_Solar_values()
+            except (requests.exceptions.RequestException, ValueError, OSError) as e:
+                if not ignore_connection_errors:
+                    raise
+                print(f"ignoring inverter error (BOSSWERK_IGNORE_CONNECTION_ERRORS): {type(e).__name__}: {e}")
             break
         else:
             getDataCountPing += 1

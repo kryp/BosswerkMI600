@@ -29,6 +29,7 @@ Use environment variables:
 * `BOSSWERK_MQTT_TOPIC` - set to enable MQTT publishing
 * `BOSSWERK_MQTT_HOST` / `BOSSWERK_MQTT_PORT` - MQTT broker (default `localhost:1883`)
 * `BOSSWERK_MQTT_USER` / `BOSSWERK_MQTT_PW` - MQTT credentials
+* `BOSSWERK_IGNORE_CONNECTION_ERRORS` - `true` to log inverter connection/data errors and exit 0 instead of failing (default `false`)
 
 Data is written to InfluxDB as measurement `solarinverter` (tag `device=MI600`, fields `power`, `today_kwh`, `total_kwh`).
 
