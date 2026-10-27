@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import requests
 import urllib3
-from requests.exceptions import Timeout
 import os
 import time, json, sys, re
 from datetime import datetime
@@ -106,10 +105,18 @@ def writeInflux(power, today, total):
 
 
 def get_Solar_values():
-    try:
-        r = requests.get(webinterface_url, verify=False, auth=(htaccess_user, htaccess_pw), timeout=5)
-    except Timeout:
-        print('I waited far too long')
+    # The inverter's wifi stick sometimes stalls mid-response. requests raises that as
+    # ConnectionError (not Timeout) while reading the body, so catch every request error
+    # and retry once before giving up on this run.
+    r = None
+    for attempt in range(1, 3):
+        try:
+            r = requests.get(webinterface_url, verify=False, auth=(htaccess_user, htaccess_pw), timeout=5)
+            break
+        except requests.exceptions.RequestException as e:
+            print(f"inverter request failed (attempt {attempt}/2): {e}")
+            time.sleep(2)
+    if r is None:
         return
 
     if r.status_code != 200:
